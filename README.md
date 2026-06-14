@@ -1,5 +1,7 @@
 # GaussQuad C++
 
+[![DOI](https://zenodo.org/badge/1269463719.svg)](https://doi.org/10.5281/zenodo.20693630)
+
 **GaussQuad** is a header-only C++ library for computing
 **Gaussian quadrature** rules — the nodes `x_k` and weights `w_k` such that
 
