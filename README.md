@@ -98,9 +98,8 @@ When embedded this way, examples, tests, and install rules are off by default
 ## Future plans
 
 Currently only the classical orthogonal polynomial families are implemented.
-In principle, the method generalizes to any family of orthogonal polynomials on a given interval `(a, b)` with a
-given weight function `w(x)`: one obtains the three-term recurrence coefficients for that weight (e.g. via the
-Stieltjes / modified-Chebyshev procedure) and feeds them to the same Golub–Welsch solver. Extending the library
+In principle, the method can be generalized to any family of orthogonal polynomials on a given interval `(a, b)` with a
+given weight function `w(x)` and recurrence relation for the same Golub–Welsch solver. Extending the library
 in this direction is a viable future plan.
 
 ## License
