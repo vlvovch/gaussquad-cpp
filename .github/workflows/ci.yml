@@ -62,7 +62,8 @@ jobs:
             auto c = gaussquad::GaussianQuadrature(32, &her);
             auto d = gaussquad::GaussianQuadrature(32, &glag);
             auto e = gaussquad::GaussianQuadrature(32, &jac);
-            return (int)(a.first.size()+b.first.size()+c.first.size()+d.first.size()+e.first.size()) % 7;
+            auto total = a.first.size()+b.first.size()+c.first.size()+d.first.size()+e.first.size();
+            return total == 5u * 32u ? 0 : 1;   // 0 == success
           }
           EOF
           for cxx in g++ clang++; do
