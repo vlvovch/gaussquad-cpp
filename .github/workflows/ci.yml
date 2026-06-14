@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Ubuntu GCC",   os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { name: "Ubuntu Clang", os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { name: "macOS Clang",  os: macos-latest }
+          - { name: "Windows MSVC", os: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DGAUSSQUAD_INCLUDE_TESTS=ON
+          -DGAUSSQUAD_BUILD_EXAMPLES=ON
+          ${{ matrix.cc && format('-DCMAKE_C_COMPILER={0} -DCMAKE_CXX_COMPILER={1}', matrix.cc, matrix.cxx) || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+  warnings:
+    name: Strict warnings (-Wall -Wextra -Werror)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile public headers with strict warnings
+        run: |
+          cat > smoke.cpp <<'EOF'
+          #include <gaussquad/gaussquad.h>
+          int main() {
+            gaussquad::LegendrePolynomial             leg;
+            gaussquad::LaguerrePolynomial             lag;
+            gaussquad::HermitePolynomial              her;
+            gaussquad::GeneralizedLaguerrePolynomial  glag(0.5);
+            gaussquad::JacobiPolynomial               jac(0.5, 0.75);
+            auto a = gaussquad::GaussianQuadrature(32, &leg);
+            auto b = gaussquad::GaussianQuadrature(32, &lag);
+            auto c = gaussquad::GaussianQuadrature(32, &her);
+            auto d = gaussquad::GaussianQuadrature(32, &glag);
+            auto e = gaussquad::GaussianQuadrature(32, &jac);
+            return (int)(a.first.size()+b.first.size()+c.first.size()+d.first.size()+e.first.size()) % 7;
+          }
+          EOF
+          for cxx in g++ clang++; do
+            for std in 11 14 17; do
+              echo "== $cxx -std=c++$std =="
+              $cxx -std=c++$std -Wall -Wextra -Werror -Iinclude smoke.cpp -o smoke && ./smoke
+            done
+          done
+
+  install-consumer:
+    name: Install + find_package consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and install
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX="$PWD/_prefix" \
+                -DGAUSSQUAD_INCLUDE_TESTS=OFF -DGAUSSQUAD_BUILD_EXAMPLES=OFF
+          cmake --install build
+      - name: Build downstream find_package consumer
+        run: |
+          mkdir consumer && cd consumer
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.14)
+          project(consumer LANGUAGES CXX)
+          find_package(GaussQuad REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE GaussQuad::GaussQuad)
+          EOF
+          cat > main.cpp <<'EOF'
+          #include <gaussquad/gaussquad.h>
+          #include <cstdio>
+          int main() {
+            gaussquad::LegendrePolynomial leg;
+            auto q = gaussquad::GaussianQuadrature(16, &leg);
+            double s = 0.0; for (double w : q.second) s += w;
+            std::printf("sum of weights = %.15g (expect 2)\n", s);
+            return (s > 1.999 && s < 2.001) ? 0 : 1;
+          }
+          EOF
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD/../_prefix"
+          cmake --build build
+          ./build/consumer

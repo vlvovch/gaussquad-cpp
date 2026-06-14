@@ -105,4 +105,4 @@ in this direction is a viable future plan.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

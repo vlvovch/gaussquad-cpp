@@ -1,0 +1,28 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: GaussQuad
+message: 'If you use GaussQuad, please cite it using the metadata below.'
+type: software
+authors:
+  - given-names: Volodymyr
+    family-names: Vovchenko
+    email: vvovchen@central.uh.edu
+    affiliation: University of Houston
+    orcid: 'https://orcid.org/0000-0002-2189-4766'
+repository-code: 'https://github.com/vlvovch/gaussquad-cpp'
+abstract: >-
+  A header-only C++ library for computing Gaussian quadrature nodes and weights
+  for the classical orthogonal polynomial families via the Golub-Welsch
+  algorithm.
+keywords:
+  - gaussian-quadrature
+  - numerical-integration
+  - orthogonal-polynomials
+  - golub-welsch
+  - header-only
+  - cpp
+license: MIT
+version: 1.0.0
+date-released: '2026-06-14'
