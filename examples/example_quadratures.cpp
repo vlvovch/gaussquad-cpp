@@ -1,5 +1,5 @@
 /**
- * @file ComputeQuadratures.cpp
+ * @file example_quadratures.cpp
  * @brief Demonstration program for Gaussian quadrature computation.
  *
  * This program demonstrates the computation of nodes and weights for various
