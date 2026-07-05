@@ -143,7 +143,7 @@ namespace gaussquad {
     }
 
     virtual double Weight(double x) const override {
-      return exp(-x);
+      return std::exp(-x);
     }
   };
 
@@ -164,7 +164,7 @@ namespace gaussquad {
   class GeneralizedLaguerrePolynomial : public LaguerrePolynomial {
     double m_alpha;
   public:
-    GeneralizedLaguerrePolynomial(double alpha) : m_alpha(alpha) {
+    explicit GeneralizedLaguerrePolynomial(double alpha) : m_alpha(alpha) {
       if (alpha <= -1.)
         throw std::invalid_argument("GeneralizedLaguerrePolynomial: alpha must be > -1");
     }
@@ -175,11 +175,14 @@ namespace gaussquad {
     }
 
     double Norm(int n) const override {
-      return tgamma(n + m_alpha + 1.) / tgamma(n + 1.);
+      // h_n = Gamma(n+alpha+1)/Gamma(n+1). Both gammas overflow to +inf for
+      // n around 170, yielding inf/inf = NaN; take the log-gamma difference so
+      // the ratio stays finite for large n.
+      return std::exp(std::lgamma(n + m_alpha + 1.) - std::lgamma(n + 1.));
     }
 
     double Weight(double x) const override {
-      return exp(-x) * pow(x, m_alpha);
+      return std::exp(-x) * std::pow(x, m_alpha);
     }
   };
 
@@ -205,7 +208,10 @@ namespace gaussquad {
     }
 
     double Norm(int n) const override {
-      double ret = sqrt(detail::pi);
+      // h_n = sqrt(pi) * 2^n * n!. This grows past the double range around
+      // n = 150, so the returned value is genuinely +inf for large n (only the
+      // Newton weight path reads Norm(n>0); Golub-Welsch uses Norm(0) only).
+      double ret = std::sqrt(detail::pi);
       for (int i = 1; i <= n; i++) {
         ret *= 2. * i;
       }
@@ -213,7 +219,7 @@ namespace gaussquad {
     }
 
     double Weight(double x) const override {
-      return exp(-x * x);
+      return std::exp(-x * x);
     }
   };
 
@@ -254,7 +260,7 @@ namespace gaussquad {
       double c = a + b;
       double den = 2. * (n + 1.) * (c - n - 1.) * (c - 2);
       double an = (c - 1.) * c * (c - 2.) / den;
-      double aln = -(a - b) * (c - 2. * n - 2.) / den;
+      double aln = -(c - 1.) * (a - b) * (c - 2. * n - 2.) / den;
       double betn = 2. * (a - 1.) * (b - 1.) * c / den;
 
       return { an,
@@ -269,17 +275,17 @@ namespace gaussquad {
       // Gamma(n+a+b+1) factor that are singular at n == 0 when a+b == -1;
       // the closed form for h_0 avoids both.
       if (n == 0) {
-        return pow(2., m_alpha + m_beta + 1.)
-          * tgamma(m_alpha + 1.) * tgamma(m_beta + 1.)
-          / tgamma(m_alpha + m_beta + 2.);
+        return std::pow(2., m_alpha + m_beta + 1.)
+          * std::tgamma(m_alpha + 1.) * std::tgamma(m_beta + 1.)
+          / std::tgamma(m_alpha + m_beta + 2.);
       }
-      return pow(2., m_alpha + m_beta + 1.) / (2. * n + m_alpha + m_beta + 1.)
-      * tgamma(n + m_alpha + 1.) / tgamma(n + 1.)
-      * tgamma(n + m_beta + 1.) / tgamma(n + m_alpha + m_beta + 1.);
+      return std::pow(2., m_alpha + m_beta + 1.) / (2. * n + m_alpha + m_beta + 1.)
+      * std::tgamma(n + m_alpha + 1.) / std::tgamma(n + 1.)
+      * std::tgamma(n + m_beta + 1.) / std::tgamma(n + m_alpha + m_beta + 1.);
     }
 
     double Weight(double x) const override {
-      return pow(1. - x, m_alpha) * pow(1. + x, m_beta);
+      return std::pow(1. - x, m_alpha) * std::pow(1. + x, m_beta);
     }
   };
 }
