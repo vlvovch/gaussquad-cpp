@@ -100,6 +100,71 @@ namespace {
     EXPECT_NEAR(I, std::sqrt(pi) / 2.0, 1e-12);
   }
 
+  // --- Weighted-moment accuracy (catches node errors, not just weight sums) -
+
+  // B(p,q) = Gamma(p) Gamma(q) / Gamma(p+q), evaluated in log space.
+  double beta(double p, double q) {
+    return std::exp(std::lgamma(p) + std::lgamma(q) - std::lgamma(p + q));
+  }
+
+  // Exact m-th moment of the Jacobi weight:
+  //   \int_{-1}^1 (1-x)^a (1+x)^b x^m dx
+  // Substitute x = 2t-1 (t in [0,1]); expand x^m = sum_k C(m,k) (2t)^k (-1)^(m-k):
+  //   = 2^(a+b+1) sum_k C(m,k) 2^k (-1)^(m-k) B(b+k+1, a+1).
+  // This is an independent closed form -- it never touches the quadrature code,
+  // so it pins down node placement (unlike the moment-0 sum-of-weights check).
+  double jacobiMomentExact(int m, double a, double b) {
+    double s = 0.0, binom = 1.0;              // binom = C(m,k)
+    for (int k = 0; k <= m; ++k) {
+      double sign = ((m - k) % 2 == 0) ? 1.0 : -1.0;
+      s += binom * std::pow(2.0, k) * sign * beta(b + k + 1.0, a + 1.0);
+      binom = binom * (m - k) / (k + 1.0);    // C(m,k) -> C(m,k+1)
+    }
+    return std::pow(2.0, a + b + 1.0) * s;
+  }
+
+  double weightedMoment(const std::pair<std::vector<double>, std::vector<double>>& q, int m) {
+    double I = 0.0;
+    for (size_t k = 0; k < q.first.size(); ++k) I += q.second[k] * std::pow(q.first[k], m);
+    return I;
+  }
+
+  TEST(Moments, JacobiAsymmetric) {
+    // alpha != beta activates the a_n recurrence coefficient. An n-point rule is
+    // exact for polynomials up to degree 2n-1, so all these moments must match.
+    const double a = 0.5, b = 0.75;
+    JacobiPolynomial p(a, b);
+    for (int n : {4, 8, 16}) {
+      auto q = GaussianQuadrature(n, &p);
+      for (int m = 0; m <= 6; ++m)
+        EXPECT_NEAR(weightedMoment(q, m), jacobiMomentExact(m, a, b), 1e-12)
+          << "n=" << n << " m=" << m;
+    }
+  }
+
+  TEST(Moments, JacobiAsymmetricNegativeParams) {
+    const double a = -0.25, b = 0.6;
+    JacobiPolynomial p(a, b);
+    for (int n : {5, 12}) {
+      auto q = GaussianQuadrature(n, &p);
+      for (int m = 0; m <= 6; ++m)
+        EXPECT_NEAR(weightedMoment(q, m), jacobiMomentExact(m, a, b), 1e-12)
+          << "n=" << n << " m=" << m;
+    }
+  }
+
+  TEST(Moments, GeneralizedLaguerre) {
+    // \int_0^inf x^alpha e^-x x^m dx = Gamma(alpha + m + 1).
+    const double alpha = 1.5;
+    GeneralizedLaguerrePolynomial p(alpha);
+    for (int n : {4, 8, 16}) {
+      auto q = GaussianQuadrature(n, &p);
+      for (int m = 0; m <= 6; ++m)
+        EXPECT_NEAR(weightedMoment(q, m), std::tgamma(alpha + m + 1.0), 1e-9)
+          << "n=" << n << " m=" << m;
+    }
+  }
+
   // --- Structural properties ----------------------------------------------
 
   TEST(Properties, NodesAscendingAndWeightsNonNegative) {
