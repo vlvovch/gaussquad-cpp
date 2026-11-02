@@ -121,6 +121,11 @@ namespace gaussquad {
    * Laguerre/Hermite quadrature, and the sum rule holds to machine precision by
    * the orthonormality of the eigenvectors.
    *
+   * If poly->HasEvenWeight() is true (Legendre, Hermite, Jacobi with
+   * alpha == beta), the rule is made exactly symmetric about the origin:
+   * x[k] == -x[n-1-k] and w[k] == w[n-1-k], and the middle node is exactly 0
+   * for odd n.
+   *
    * @param n Number of nodes
    * @param poly Pointer to the orthogonal polynomial object
    * @return Pair of vectors: first contains nodes (sorted), second the weights
@@ -172,6 +177,25 @@ namespace gaussquad {
 
     /// |a| with the sign of b.
     inline double sign_of(double a, double b) { return b >= 0.0 ? std::fabs(a) : -std::fabs(a); }
+
+    // Make a rule for an even weight function exactly symmetric about the
+    // origin. The nodes must be sorted in ascending order. The eigensolver
+    // returns such a rule symmetric only to round-off (~1e-15, with a middle
+    // node of ~1e-16 instead of 0 for odd n). Replacing each mirror pair by its
+    // average gives x_k == -x_{n-1-k} and w_k == w_{n-1-k} bitwise, and since
+    // it is an average it does not increase the error.
+    inline void Symmetrize(std::vector<double>& x, std::vector<double>& w) {
+      const int n = static_cast<int>(x.size());
+      for (int lo = 0, hi = n - 1; lo < hi; ++lo, --hi) {
+        const double xm = 0.5 * (x[hi] - x[lo]);
+        x[lo] = -xm;
+        x[hi] =  xm;
+        const double wm = 0.5 * (w[lo] + w[hi]);
+        w[lo] = wm;
+        w[hi] = wm;
+      }
+      if (n % 2 == 1) x[n / 2] = 0.0;
+    }
 
     // Implicit-shift QL eigensolver for a symmetric tridiagonal matrix, tracking
     // only the FIRST ROW of the eigenvector matrix -- all the Golub-Welsch weight
@@ -362,6 +386,10 @@ namespace gaussquad {
 
     std::vector<double> x(n), w(n);
     for (int k = 0; k < n; ++k) { x[k] = nw[k].first; w[k] = nw[k].second; }
+
+    // Even weight -> symmetric rule; impose it exactly (see detail::Symmetrize).
+    if (poly->HasEvenWeight()) detail::Symmetrize(x, w);
+
     return std::make_pair(x, w);
   }
 

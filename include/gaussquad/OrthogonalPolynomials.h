@@ -29,6 +29,7 @@ namespace gaussquad {
     // Local pi constant. M_PI is not standard C++ and is unavailable on some
     // toolchains (e.g. MSVC without _USE_MATH_DEFINES), so it is not used here.
     constexpr double pi = 3.141592653589793238462643383279502884;
+    constexpr double ln2 = 0.693147180559945309417232121458176568;
   }
 
   /**
@@ -85,6 +86,22 @@ namespace gaussquad {
      * @return Value of the weight function w(x)
      */
     virtual double Weight(double x) const = 0;
+
+    /**
+     * @brief Whether the weight function is even on an interval symmetric about zero.
+     *
+     * When this returns true, i.e. w(-x) = w(x) on (-a, a), the Gauss rule is
+     * symmetric about the origin, and the Golub-Welsch solver imposes that
+     * symmetry exactly: x_k == -x_{n-1-k} and w_k == w_{n-1-k} bitwise, with
+     * the middle node exactly 0 for odd n. Otherwise the eigensolver would
+     * leave the symmetry broken at the round-off level.
+     *
+     * The default is false, so families that do not override this method are
+     * left untouched.
+     *
+     * @return true if the weight function is even about x = 0
+     */
+    virtual bool HasEvenWeight() const { return false; }
   };
 
   /**
@@ -115,6 +132,8 @@ namespace gaussquad {
     double Weight(double /*x*/) const override {
       return 1.;
     }
+
+    bool HasEvenWeight() const override { return true; }
   };
 
   /**
@@ -175,9 +194,15 @@ namespace gaussquad {
     }
 
     double Norm(int n) const override {
-      // h_n = Gamma(n+alpha+1)/Gamma(n+1). Both gammas overflow to +inf for
-      // n around 170, yielding inf/inf = NaN; take the log-gamma difference so
-      // the ratio stays finite for large n.
+      // h_n = Gamma(n+alpha+1)/Gamma(n+1). Both gammas overflow to +inf once
+      // n + alpha exceeds ~170, long before the ratio itself does (inf/inf =
+      // NaN). The direct ratio is accurate to ~1e-16 and is kept wherever it
+      // is a normal number; elsewhere the log-gamma difference is used, which
+      // overflows only if h_n itself is not representable. (Using lgamma
+      // throughout would cost accuracy: the difference of two large lgammas
+      // loses up to ~1e-13 relative, e.g. for alpha = 100, n = 50.)
+      const double h = std::tgamma(n + m_alpha + 1.) / std::tgamma(n + 1.);
+      if (std::isnormal(h)) return h;
       return std::exp(std::lgamma(n + m_alpha + 1.) - std::lgamma(n + 1.));
     }
 
@@ -221,6 +246,8 @@ namespace gaussquad {
     double Weight(double x) const override {
       return std::exp(-x * x);
     }
+
+    bool HasEvenWeight() const override { return true; }
   };
 
   /**
@@ -274,19 +301,37 @@ namespace gaussquad {
       // The general-n formula below has a (2n+a+b+1) denominator and a
       // Gamma(n+a+b+1) factor that are singular at n == 0 when a+b == -1;
       // the closed form for h_0 avoids both.
+      //
+      // The products of tgamma values overflow once an argument exceeds ~170
+      // (e.g. alpha = beta = 100 already gives inf/inf = NaN), although h_n
+      // itself is of moderate size. The direct form is kept where it works,
+      // being accurate to a few ulps, and the same expression is evaluated
+      // through lgamma otherwise. All gamma arguments are positive for
+      // alpha, beta > -1, so lgamma is the logarithm of a positive Gamma.
+      const double a = m_alpha, b = m_beta;
       if (n == 0) {
-        return std::pow(2., m_alpha + m_beta + 1.)
-          * std::tgamma(m_alpha + 1.) * std::tgamma(m_beta + 1.)
-          / std::tgamma(m_alpha + m_beta + 2.);
+        const double h = std::pow(2., a + b + 1.)
+          * std::tgamma(a + 1.) * std::tgamma(b + 1.)
+          / std::tgamma(a + b + 2.);
+        if (std::isnormal(h)) return h;
+        return std::exp((a + b + 1.) * detail::ln2
+                        + std::lgamma(a + 1.) + std::lgamma(b + 1.)
+                        - std::lgamma(a + b + 2.));
       }
-      return std::pow(2., m_alpha + m_beta + 1.) / (2. * n + m_alpha + m_beta + 1.)
-      * std::tgamma(n + m_alpha + 1.) / std::tgamma(n + 1.)
-      * std::tgamma(n + m_beta + 1.) / std::tgamma(n + m_alpha + m_beta + 1.);
+      const double h = std::pow(2., a + b + 1.) / (2. * n + a + b + 1.)
+        * std::tgamma(n + a + 1.) / std::tgamma(n + 1.)
+        * std::tgamma(n + b + 1.) / std::tgamma(n + a + b + 1.);
+      if (std::isnormal(h)) return h;
+      return std::exp((a + b + 1.) * detail::ln2 - std::log(2. * n + a + b + 1.)
+                      + std::lgamma(n + a + 1.) - std::lgamma(n + 1.)
+                      + std::lgamma(n + b + 1.) - std::lgamma(n + a + b + 1.));
     }
 
     double Weight(double x) const override {
       return std::pow(1. - x, m_alpha) * std::pow(1. + x, m_beta);
     }
+
+    bool HasEvenWeight() const override { return m_alpha == m_beta; }
   };
 }
 

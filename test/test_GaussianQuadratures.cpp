@@ -313,4 +313,155 @@ namespace {
     EXPECT_NO_THROW(JacobiPolynomial(-0.5, -0.5));   // valid: Chebyshev 1st kind
   }
 
+  // --- Large weight exponents: h_n where tgamma overflows ------------------
+
+  // Integral of the Jacobi weight for integer beta, computed without any gamma
+  // function: mu0(a, 0) = 2^(a+1)/(a+1) and mu0(a, b+1) = mu0(a, b) * 2(b+1)/(a+b+2).
+  // Every factor is O(1), so this is well conditioned and independent of the
+  // library's tgamma/lgamma code.
+  double JacobiMu0IntegerBeta(double a, int b) {
+    double mu = std::pow(2.0, a + 1.0) / (a + 1.0);
+    for (int k = 0; k < b; ++k) mu *= 2.0 * (k + 1) / (a + k + 2.0);
+    return mu;
+  }
+
+  TEST(LargeParameters, JacobiRuleIsFiniteAndExact) {
+    // With exponents this large the tgamma products in Norm(0) overflow
+    // (inf/inf = NaN), which used to turn every weight into NaN.
+    const double params[][2] = { {100., 100.}, {250., 250.}, {300.5, 2.}, {2., 300.} };
+    for (const auto& ab : params) {
+      const double a = ab[0], b = ab[1];
+      JacobiPolynomial jac(a, b);
+      const double mu0 = JacobiMu0IntegerBeta(a, static_cast<int>(b));
+      // Mean and second moment of x under the normalised weight (x = 2t - 1 with
+      // t ~ Beta(b+1, a+1)); exact for any rule with n >= 2.
+      const double mean = (b - a) / (a + b + 2.);
+      const double second = 4. * (a + 1.) * (b + 1.) / ((a + b + 2.) * (a + b + 2.) * (a + b + 3.))
+                          + mean * mean;
+      for (int n : {2, 8, 32}) {
+        auto q = GaussianQuadrature(n, &jac);
+        double s0 = 0., s1 = 0., s2 = 0.;
+        for (int k = 0; k < n; ++k) {
+          const double x = q.first[k], w = q.second[k];
+          ASSERT_TRUE(std::isfinite(x)) << "a=" << a << " b=" << b << " n=" << n;
+          ASSERT_TRUE(std::isfinite(w)) << "a=" << a << " b=" << b << " n=" << n;
+          EXPECT_GE(w, 0.0);
+          s0 += w; s1 += w * x; s2 += w * x * x;
+        }
+        EXPECT_NEAR(s0 / mu0, 1.0, 1e-10) << "a=" << a << " b=" << b << " n=" << n;
+        EXPECT_NEAR(s1 / s0, mean, 1e-12) << "a=" << a << " b=" << b << " n=" << n;
+        EXPECT_NEAR(s2 / s0, second, 1e-12) << "a=" << a << " b=" << b << " n=" << n;
+      }
+    }
+  }
+
+  TEST(LargeParameters, NormMatchesRatioRecurrence) {
+    // h_n / h_{n-1} has a closed form made of O(1) factors. Check Norm(n)
+    // against it on both sides of the point where tgamma overflows.
+
+    // Generalized Laguerre: h_n / h_{n-1} = (n + alpha) / n.
+    // tgamma(n + 151) overflows from n = 21 on.
+    const double alpha = 150.;
+    GeneralizedLaguerrePolynomial lag(alpha);
+    for (int n = 1; n <= 30; ++n) {
+      ASSERT_TRUE(std::isfinite(lag.Norm(n))) << "n=" << n;
+      EXPECT_NEAR(lag.Norm(n) / (lag.Norm(n - 1) * (n + alpha) / n), 1.0, 1e-10) << "n=" << n;
+    }
+
+    // Jacobi: h_n / h_{n-1} = (2n+a+b-1)(n+a)(n+b) / ((2n+a+b+1) n (n+a+b)).
+    const double params[][2] = { {100., 100.}, {300.5, 2.} };
+    for (const auto& ab : params) {
+      const double a = ab[0], b = ab[1];
+      JacobiPolynomial jac(a, b);
+      EXPECT_NEAR(jac.Norm(0) / JacobiMu0IntegerBeta(a, static_cast<int>(b)), 1.0, 1e-10)
+          << "a=" << a << " b=" << b;
+      for (int n = 1; n <= 30; ++n) {
+        const double s = 2. * n + a + b;
+        const double ratio = (s - 1.) * (n + a) * (n + b) / ((s + 1.) * n * (n + a + b));
+        ASSERT_TRUE(std::isfinite(jac.Norm(n))) << "a=" << a << " b=" << b << " n=" << n;
+        EXPECT_NEAR(jac.Norm(n) / (jac.Norm(n - 1) * ratio), 1.0, 1e-10)
+            << "a=" << a << " b=" << b << " n=" << n;
+      }
+    }
+  }
+
+  TEST(LargeParameters, NewtonWeightsWithLargeJacobiExponents) {
+    // GaussianQuadraturesNewton forms its weights from Norm(n-1), which used
+    // to be NaN here even with the exact nodes as the seed.
+    JacobiPolynomial jac(100., 100.);
+    const int n = 16;
+    auto gw = GaussianQuadrature(n, &jac);
+    auto nr = GaussianQuadraturesNewton(n, gw.first, &jac);
+    for (int k = 0; k < n; ++k) {
+      EXPECT_NEAR(nr.first[k], gw.first[k], 1e-14) << "k=" << k;
+      EXPECT_NEAR(nr.second[k] / gw.second[k], 1.0, 1e-10) << "k=" << k;
+    }
+  }
+
+  // --- Exact symmetry for even weight functions ----------------------------
+
+  // A Legendre family that does not override HasEvenWeight(), like a
+  // user-defined family would not: its rule is left as the eigensolver
+  // returns it.
+  class PlainLegendre : public OrthogonalPolynomial {
+  public:
+    std::vector<double> Recurrence(int n) const override {
+      return { (2. * n + 1.) / (n + 1.), 0., n / (n + 1.) };
+    }
+    double Norm(int n) const override { return 2. / (2. * n + 1.); }
+    double Weight(double /*x*/) const override { return 1.; }
+  };
+
+  void ExpectExactlySymmetric(const std::pair<std::vector<double>, std::vector<double>>& q) {
+    const int n = static_cast<int>(q.first.size());
+    for (int k = 0; k < n; ++k) {
+      EXPECT_EQ(q.first[k], -q.first[n - 1 - k]) << "node k=" << k << " n=" << n;
+      EXPECT_EQ(q.second[k], q.second[n - 1 - k]) << "weight k=" << k << " n=" << n;
+    }
+    if (n % 2 == 1) {
+      EXPECT_EQ(q.first[n / 2], 0.0) << "middle node, n=" << n;
+    }
+  }
+
+  TEST(Symmetry, HasEvenWeightFlags) {
+    EXPECT_TRUE(LegendrePolynomial().HasEvenWeight());
+    EXPECT_TRUE(HermitePolynomial().HasEvenWeight());
+    EXPECT_TRUE(JacobiPolynomial(0.3, 0.3).HasEvenWeight());
+    EXPECT_FALSE(JacobiPolynomial(0.3, 0.5).HasEvenWeight());
+    EXPECT_FALSE(LaguerrePolynomial().HasEvenWeight());
+    EXPECT_FALSE(GeneralizedLaguerrePolynomial(0.5).HasEvenWeight());
+    EXPECT_FALSE(PlainLegendre().HasEvenWeight());   // the default for user-defined families
+  }
+
+  TEST(Symmetry, EvenWeightRulesAreExactlySymmetric) {
+    LegendrePolynomial leg;
+    HermitePolynomial her;
+    JacobiPolynomial gegenbauer(0.5, 0.5), chebyshev(-0.5, -0.5), wide(100., 100.);
+    const OrthogonalPolynomial* polys[] = { &leg, &her, &gegenbauer, &chebyshev, &wide };
+    for (const OrthogonalPolynomial* p : polys)
+      for (int n : {1, 2, 3, 10, 101, 1000})
+        ExpectExactlySymmetric(GaussianQuadrature(n, p));
+  }
+
+  TEST(Symmetry, SymmetrizedRuleAgreesWithUnsymmetrized) {
+    // Symmetrizing only moves nodes and weights at the round-off level
+    // (measured: <= 1e-15 and <= 3e-15 up to n = 1000), and the result still
+    // agrees with the independent Newton-Raphson Legendre path. Tolerances are
+    // absolute: the Golub-Welsch weights carry an absolute error ~ eps * mu0,
+    // so a relative comparison would be dominated by the tiny endpoint weights.
+    LegendrePolynomial leg;
+    PlainLegendre plain;
+    for (int n : {10, 101, 1000}) {
+      auto sym = GaussianQuadrature(n, &leg);
+      auto raw = GaussianQuadrature(n, &plain);
+      auto newton = GaussianQuadraturesLegendre(n);
+      for (int k = 0; k < n; ++k) {
+        EXPECT_NEAR(sym.first[k],  raw.first[k],     1e-14) << "n=" << n << " k=" << k;
+        EXPECT_NEAR(sym.second[k], raw.second[k],    1e-14) << "n=" << n << " k=" << k;
+        EXPECT_NEAR(sym.first[k],  newton.first[k],  1e-14) << "n=" << n << " k=" << k;
+        EXPECT_NEAR(sym.second[k], newton.second[k], 1e-12) << "n=" << n << " k=" << k;
+      }
+    }
+  }
+
 }

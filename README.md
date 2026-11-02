@@ -63,6 +63,12 @@ for (size_t k = 0; k < x.size(); ++k)
 See [`examples/example_quadratures.cpp`](examples/example_quadratures.cpp) for a
 full demonstration that prints nodes and weights for every family.
 
+For weight functions that are even about the origin (Legendre, Hermite, and
+Jacobi with `α = β`), the returned rule is exactly symmetric:
+`x[k] == -x[n-1-k]` and `w[k] == w[n-1-k]`, and for odd `n` the middle node is
+exactly `0`. A user-defined family gets the same treatment by overriding
+`OrthogonalPolynomial::HasEvenWeight()` to return `true`.
+
 ## Building
 
 ```sh
