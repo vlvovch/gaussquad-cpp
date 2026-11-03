@@ -11,6 +11,8 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <limits>
+#include <string>
 
 using namespace gaussquad;
 
@@ -165,6 +167,19 @@ namespace {
     }
   }
 
+  TEST(Norm, GeneralizedLaguerreHighOrderIsFinite) {
+    // Golub-Welsch reads only Norm(0), so the rule-based tests above cannot see
+    // an overflow in Norm(n) at large n, which the Newton weight formula uses.
+    // h_n = Gamma(n+alpha+1)/Gamma(n+1), which is n + 1 for alpha = 1; the old
+    // tgamma ratio gave inf at n = 170 and inf/inf = NaN from n = 171 on.
+    GeneralizedLaguerrePolynomial p(1.0);
+    for (int n : {170, 200, 500}) {
+      const double h = p.Norm(n);
+      ASSERT_TRUE(std::isfinite(h)) << "n=" << n;
+      EXPECT_NEAR(h / (n + 1.0), 1.0, 1e-10) << "n=" << n;
+    }
+  }
+
   // --- Structural properties ----------------------------------------------
 
   TEST(Properties, NodesAscendingAndWeightsNonNegative) {
@@ -218,6 +233,29 @@ namespace {
       EXPECT_THROW(InitialGuessLaguerre(n),            std::invalid_argument) << "n=" << n;
       EXPECT_THROW(InitialGuessHermite(n),             std::invalid_argument) << "n=" << n;
     }
+  }
+
+  // Run the Newton solver on a 2-point Legendre rule from the seed x0 and expect
+  // the derivative guard, specifically, to throw. Without the guard these seeds
+  // return NaN nodes and weights rather than throwing at all.
+  void ExpectNewtonDerivativeGuardThrows(const std::vector<double>& x0) {
+    LegendrePolynomial leg;
+    try {
+      GaussianQuadraturesNewton(2, x0, &leg);
+      ADD_FAILURE() << "expected std::runtime_error from the derivative guard";
+    } catch (const std::runtime_error& e) {
+      EXPECT_NE(std::string(e.what()).find("derivative"), std::string::npos) << e.what();
+    }
+  }
+
+  TEST(Validation, NewtonThrowsOnZeroOrNonFiniteDerivative) {
+    // P_2'(0) == 0 exactly, so the first Newton step would divide by zero.
+    ExpectNewtonDerivativeGuardThrows({0.0, 0.0});
+    // A non-finite seed gives a non-finite derivative.
+    ExpectNewtonDerivativeGuardThrows({std::numeric_limits<double>::quiet_NaN(),
+                                       std::numeric_limits<double>::quiet_NaN()});
+    ExpectNewtonDerivativeGuardThrows({std::numeric_limits<double>::infinity(),
+                                       std::numeric_limits<double>::infinity()});
   }
 
   // --- Jacobi edge cases (removable singularities at n == 0) ---------------
