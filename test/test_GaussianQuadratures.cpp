@@ -423,11 +423,15 @@ namespace {
     }
 
     // Where the true mu0 exceeds the double range, the result is +inf, not
-    // NaN or 0 from an intermediate overflow such as s * s.
-    const double overflowing[][2] = { {1e200, 1e199}, {0.5, 1e300}, {20., 1e160}, {1e308, 1.0000000001e308} };
+    // NaN or 0 from an intermediate overflow such as s * s. Both argument
+    // orders are checked.
+    const double overflowing[][2] = { {1e200, 1e199}, {0.5, 1e300}, {20., 1e160}, {1e308, 1.0000000001e308},
+                                      {20., 1e308}, {9.5, 1.7e308}, {1e10, 1e308} };
     for (const auto& ab : overflowing) {
       EXPECT_EQ(JacobiPolynomial(ab[0], ab[1]).Norm(0), std::numeric_limits<double>::infinity())
           << "alpha=" << ab[0] << " beta=" << ab[1];
+      EXPECT_EQ(JacobiPolynomial(ab[1], ab[0]).Norm(0), std::numeric_limits<double>::infinity())
+          << "alpha=" << ab[1] << " beta=" << ab[0];
     }
 
     // Integer beta: the gamma-free product reference.
@@ -456,6 +460,29 @@ namespace {
       // mu0 is symmetric in (alpha, beta).
       EXPECT_NEAR(JacobiPolynomial(t[1], t[0]).Norm(0) / t[2], 1.0, Mu0Tolerance(t[2]))
           << "alpha=" << t[1] << " beta=" << t[0];
+    }
+  }
+
+  TEST(LargeParameters, JacobiWeightIntegralIsPositiveOrInfinite) {
+    // Over every pair from a grid spanning the whole valid range (-1, DBL_MAX],
+    // mu0 must be positive and either finite or +inf: never NaN or 0, which an
+    // intermediate overflow or underflow would produce. mu0 is symmetric in
+    // (alpha, beta); swapping them may change the last bit when both are
+    // small, where the tgamma product is taken in argument order.
+    const double grid[] = { -1. + 1e-12, -0.999, -0.5, 0., 0.5, 8.99, 9., 9.01, 10., 20., 100., 170., 1e3,
+                            1e6, 1e12, 1e50, 1e150, 1e154, 1e155, 1e200, 1e300, 1e307, 9e307, 1e308, 1.7e308,
+                            std::numeric_limits<double>::max() };
+    for (double a : grid) {
+      for (double b : grid) {
+        const double mu0 = JacobiPolynomial(a, b).Norm(0);
+        EXPECT_FALSE(std::isnan(mu0)) << "alpha=" << a << " beta=" << b;
+        EXPECT_GT(mu0, 0.0) << "alpha=" << a << " beta=" << b;
+        const double swapped = JacobiPolynomial(b, a).Norm(0);
+        if (std::isinf(mu0))
+          EXPECT_EQ(swapped, mu0) << "alpha=" << a << " beta=" << b;
+        else
+          EXPECT_NEAR(swapped / mu0, 1.0, 1e-15) << "alpha=" << a << " beta=" << b;
+      }
     }
   }
 

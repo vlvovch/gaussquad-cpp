@@ -85,14 +85,15 @@ namespace gaussquad {
       // when the exponents are huge and nearly equal.
       const double diff = std::fabs(a - b) - k;
       const double d = 0.5 * diff / h;
-      // For small d, log1p and atanh keep the O(s d^2) terms accurate; for
-      // d >= 1/2, 1 - d^2 = (p/h)(q/h) and atanh(d) = log(q/p)/2 avoid
-      // computing 1 - d with cancellation. The logarithms of p/h and q/h are
-      // taken separately because their product, like s*s, can underflow or
-      // overflow.
+      // For small d, log1p and atanh keep the O(s d^2) terms accurate. For
+      // d >= 1/2, using 1 - d^2 = (p/h)(q/h) and atanh(d) = log(q/p)/2, the
+      // body regroups exactly as (p - 1/2) log(p/h) + (q - 1/2) log(q/h),
+      // which avoids computing 1 - d with cancellation. In that form each
+      // term stays finite for any p, q up to the double range (|x log(x/h)|
+      // <= h/e for x <= h, and q < 2h), so no intermediate overflows.
       const double body = d < 0.5
           ? (h - 0.5) * std::log1p(-d * d) + diff * std::atanh(d)
-          : (h - 0.5) * (std::log(p / h) + std::log(q / h)) + 0.5 * diff * std::log(q / p);
+          : (p - 0.5) * std::log(p / h) + (q - 0.5) * std::log(q / h);
       const double logMu0 = 0.5 * std::log(pi / h) + body
                           + StirlingRemainder(p) + StirlingRemainder(q) - StirlingRemainder(2. * h);
       return std::exp(logMu0) * scale;
