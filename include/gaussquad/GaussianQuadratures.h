@@ -272,6 +272,9 @@ namespace gaussquad {
           dp0 = dp1;
           dp1 = ndp;
         }
+        if (dp1 == 0.0 || !std::isfinite(dp1)) {
+          throw std::runtime_error("Newton-Raphson: zero or non-finite derivative for root " + std::to_string(k));
+        }
         dx = -p1/dp1;
         x[k] += dx;
         if (std::abs(dx) < TOL) {
