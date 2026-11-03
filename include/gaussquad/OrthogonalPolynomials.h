@@ -30,6 +30,67 @@ namespace gaussquad {
     // toolchains (e.g. MSVC without _USE_MATH_DEFINES), so it is not used here.
     constexpr double pi = 3.141592653589793238462643383279502884;
     constexpr double ln2 = 0.693147180559945309417232121458176568;
+
+    // Remainder of Stirling's series,
+    //   lgamma(x) = (x - 1/2) log(x) - x + log(2 pi)/2 + StirlingRemainder(x),
+    // summed through the x^-13 term. For x >= 10 the truncation error is
+    // below 3e-17.
+    inline double StirlingRemainder(double x) {
+      const double r = 1. / x, r2 = r * r;
+      return r * (1. / 12. + r2 * (-1. / 360. + r2 * (1. / 1260. + r2 * (-1. / 1680.
+           + r2 * (1. / 1188. + r2 * (-691. / 360360. + r2 * (1. / 156.)))))));
+    }
+
+    // mu0 = 2^(a+b+1) Gamma(a+1) Gamma(b+1) / Gamma(a+b+2), the integral of
+    // the Jacobi weight (1-x)^a (1+x)^b over [-1, 1], for a, b > -1.
+    //
+    // With p = min(a,b)+1 and q = max(a,b)+1:
+    //  - p, q < 10: the direct product of tgamma values. The arguments are
+    //    small, where tgamma is accurate to a few ulps and cannot overflow.
+    //  - otherwise, Stirling's series with the large terms cancelled
+    //    analytically. A plain sum of lgamma values would lose accuracy for
+    //    large exponents: the terms grow like a log(a) and cancel almost
+    //    completely (for a = b, mu0 ~ sqrt(pi/a)), leaving their rounding
+    //    errors in the result (~1e-12 relative at a = b = 1000, ~1% at
+    //    a = b = 1e12). The direct tgamma product, besides overflowing, is
+    //    also less accurate here, since tgamma itself errs by up to a few
+    //    hundred ulps at large non-integer arguments (glibc 2.39).
+    //
+    //    First, while p < 10, p is raised by one using
+    //      mu0(p, q) = mu0(p+1, q) * (p+q) / (2p),
+    //    which follows from B(p, q) = B(p+1, q) (p+q)/p; each factor exceeds 1
+    //    because q > p, and is exact to half an ulp. Then, with s = p + q,
+    //    d = (q - p)/s and R = StirlingRemainder,
+    //      log mu0 = log(2 pi / s)/2 + (s-1)/2 log(1 - d^2) + s d atanh(d)
+    //                + R(p) + R(q) - R(s),
+    //    the (s-1) log 2 and (x - 1/2) log x terms of Stirling's series having
+    //    cancelled exactly. This is accurate to a few ulps of log mu0, which is
+    //    the best that exp() of a computed logarithm can give.
+    inline double JacobiWeightIntegral(double a, double b) {
+      double p = (a < b ? a : b) + 1.;
+      const double q = (a < b ? b : a) + 1.;
+      const double big = 10.;
+      if (q < big)
+        return std::pow(2., a + b + 1.) * std::tgamma(a + 1.) * std::tgamma(b + 1.)
+             / std::tgamma(a + b + 2.);
+      double scale = 1.;
+      int k = 0;
+      for (; p < big; p += 1., ++k) scale *= (p + q) / (2. * p);
+      const double s = a + b + 2. + k;
+      // q - p, from |a - b| rather than from p and q, so that it stays exact
+      // when the exponents are huge and nearly equal.
+      const double diff = std::fabs(a - b) - k;
+      const double d = diff / s;
+      // For small d, log1p and atanh keep the O(s d^2) terms accurate; for
+      // d >= 1/2, 1 - d^2 = 4pq/s^2 and atanh(d) = log(q/p)/2 avoid
+      // computing 1 - d with cancellation.
+      const double body = d < 0.5
+          ? 0.5 * (s - 1.) * std::log1p(-d * d) + diff * std::atanh(d)
+          : 0.5 * (s - 1.) * std::log(4. * p * q / (s * s)) + 0.5 * diff * std::log(q / p);
+      const double logMu0 = 0.5 * std::log(2. * pi / s) + body
+                          + StirlingRemainder(p) + StirlingRemainder(q) - StirlingRemainder(s);
+      return std::exp(logMu0) * scale;
+    }
   }
 
   /**
@@ -196,11 +257,14 @@ namespace gaussquad {
     double Norm(int n) const override {
       // h_n = Gamma(n+alpha+1)/Gamma(n+1). Both gammas overflow to +inf once
       // n + alpha exceeds ~170, long before the ratio itself does (inf/inf =
-      // NaN). The direct ratio is accurate to ~1e-16 and is kept wherever it
-      // is a normal number; elsewhere the log-gamma difference is used, which
-      // overflows only if h_n itself is not representable. (Using lgamma
-      // throughout would cost accuracy: the difference of two large lgammas
-      // loses up to ~1e-13 relative, e.g. for alpha = 100, n = 50.)
+      // NaN). The direct ratio is kept wherever it is a normal number;
+      // elsewhere the log-gamma difference is used, which overflows only if
+      // h_n itself is not representable. The direct ratio is the more
+      // accurate of the two where both apply: the difference of two large
+      // lgammas loses relative accuracy in proportion to their size (measured
+      // with glibc 2.39 for alpha < 171: median 0.8-10 ulp for the ratio
+      // against 2-139 ulp for the lgamma difference, worst cases 416 against
+      // 1214 ulp).
       const double h = std::tgamma(n + m_alpha + 1.) / std::tgamma(n + 1.);
       if (std::isnormal(h)) return h;
       return std::exp(std::lgamma(n + m_alpha + 1.) - std::lgamma(n + 1.));
@@ -302,22 +366,22 @@ namespace gaussquad {
       // Gamma(n+a+b+1) factor that are singular at n == 0 when a+b == -1;
       // the closed form for h_0 avoids both.
       //
-      // The products of tgamma values overflow once an argument exceeds ~170
-      // (e.g. alpha = beta = 100 already gives inf/inf = NaN), although h_n
-      // itself is of moderate size. The direct form is kept where it works,
-      // being accurate to a few ulps, and the same expression is evaluated
-      // through lgamma otherwise. All gamma arguments are positive for
-      // alpha, beta > -1, so lgamma is the logarithm of a positive Gamma.
+      // h_0 scales every Golub-Welsch weight, and is computed by
+      // detail::JacobiWeightIntegral: directly for small exponents, and
+      // otherwise in a form that is accurate to a few ulps of log h_0 for any
+      // exponent size.
+      //
+      // For n > 0, which only the Newton-Raphson weight formula reads, the
+      // products of tgamma values overflow once an argument exceeds ~170,
+      // although h_n itself may be of moderate size. The direct form is kept
+      // where it is a normal number; otherwise the same expression is
+      // evaluated through lgamma. That fallback is simpler, but loses accuracy
+      // as the gamma arguments grow, roughly 1e-16 * N log(N) relative with
+      // N = n + alpha + beta (~1e-12 at N ~ 2000). All gamma arguments are
+      // positive for alpha, beta > -1, so lgamma is the logarithm of a
+      // positive Gamma.
       const double a = m_alpha, b = m_beta;
-      if (n == 0) {
-        const double h = std::pow(2., a + b + 1.)
-          * std::tgamma(a + 1.) * std::tgamma(b + 1.)
-          / std::tgamma(a + b + 2.);
-        if (std::isnormal(h)) return h;
-        return std::exp((a + b + 1.) * detail::ln2
-                        + std::lgamma(a + 1.) + std::lgamma(b + 1.)
-                        - std::lgamma(a + b + 2.));
-      }
+      if (n == 0) return detail::JacobiWeightIntegral(a, b);
       const double h = std::pow(2., a + b + 1.) / (2. * n + a + b + 1.)
         * std::tgamma(n + a + 1.) / std::tgamma(n + 1.)
         * std::tgamma(n + b + 1.) / std::tgamma(n + a + b + 1.);

@@ -396,6 +396,59 @@ namespace {
     }
   }
 
+  // Tolerance for a computed mu0 against an exact reference: 1e-14, or a few
+  // ulps of log(mu0) where mu0 is so large or small that exp() of a computed
+  // logarithm cannot do better.
+  double Mu0Tolerance(double ref) {
+    return std::max(1e-14, 3. * std::numeric_limits<double>::epsilon() * std::fabs(std::log(ref)));
+  }
+
+  TEST(LargeParameters, JacobiWeightIntegralIsAccurate) {
+    // mu0 = Norm(0) scales every Golub-Welsch weight. A plain sum of lgamma
+    // values loses accuracy as the exponents grow (3e-14 relative at
+    // alpha = beta = 100, 2e-12 at 1000, 7e-3 at 1e12), because its large
+    // terms cancel almost completely; the library cancels them analytically.
+
+    // alpha = beta: by the duplication formula, mu0 = sqrt(pi) Gamma(x) / Gamma(x + 1/2)
+    // with x = alpha + 1, and for large x
+    //   Gamma(x + 1/2) / Gamma(x) = sqrt(x) (1 - 1/(8x) + 1/(128x^2) + 5/(1024x^3) - 21/(32768x^4) + O(x^-5)),
+    // which for x >= 1e4 is accurate to ~1e-23 relative.
+    for (double a : {1e4, 1e6, 1e9, 1e12}) {
+      const double x = a + 1.;
+      const double ref = std::sqrt(pi / x)
+          / (1. - 1. / (8. * x) + 1. / (128. * x * x) + 5. / (1024. * x * x * x) - 21. / (32768. * x * x * x * x));
+      EXPECT_NEAR(JacobiPolynomial(a, a).Norm(0) / ref, 1.0, Mu0Tolerance(ref)) << "alpha=beta=" << a;
+    }
+
+    // Integer beta: the gamma-free product reference.
+    const double integerBeta[][2] = { {100., 100.}, {300., 300.}, {1000., 1000.}, {1000.5, 7.} };
+    for (const auto& ab : integerBeta) {
+      const double ref = JacobiMu0IntegerBeta(ab[0], static_cast<int>(ab[1]));
+      EXPECT_NEAR(JacobiPolynomial(ab[0], ab[1]).Norm(0) / ref, 1.0, Mu0Tolerance(ref))
+          << "alpha=" << ab[0] << " beta=" << ab[1];
+    }
+
+    // Non-integer and unequal exponents, against values computed with mpmath
+    // at 60 digits for the double nearest each decimal literal. These cover
+    // each branch: raising the smaller argument to 10 first ((-0.5, 30.25),
+    // (-0.9, 61.8)), |alpha - beta| / (alpha + beta + 2) >= 1/2 ((9.5, 40.3)),
+    // and < 1/2 but non-zero ((150.5, 220.25), (1e9, 1.0001e9)).
+    const double tabulated[][3] = {
+      { -0.5,  30.25,    574856433.33957649 },
+      { -0.9,  61.8,     2.7077795187573254e+19 },
+      {  9.5,  40.3,     7808.6417682065375 },
+      { 150.5, 220.25,   93.835390843140222 },
+      {  1e9,  1.0001e9, 0.00068272530425484414 },
+    };
+    for (const auto& t : tabulated) {
+      EXPECT_NEAR(JacobiPolynomial(t[0], t[1]).Norm(0) / t[2], 1.0, Mu0Tolerance(t[2]))
+          << "alpha=" << t[0] << " beta=" << t[1];
+      // mu0 is symmetric in (alpha, beta).
+      EXPECT_NEAR(JacobiPolynomial(t[1], t[0]).Norm(0) / t[2], 1.0, Mu0Tolerance(t[2]))
+          << "alpha=" << t[1] << " beta=" << t[0];
+    }
+  }
+
   TEST(LargeParameters, NewtonWeightsWithLargeJacobiExponents) {
     // GaussianQuadraturesNewton forms its weights from Norm(n-1), which used
     // to be NaN here even with the exact nodes as the seed.
