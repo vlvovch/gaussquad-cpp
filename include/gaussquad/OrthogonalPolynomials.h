@@ -76,19 +76,25 @@ namespace gaussquad {
       double scale = 1.;
       int k = 0;
       for (; p < big; p += 1., ++k) scale *= (p + q) / (2. * p);
-      const double s = a + b + 2. + k;
+      // h = s/2, formed from halves so that it stays finite when a + b
+      // overflows (mu0 ~ sqrt(pi/a) is still representable there), and used
+      // in place of s throughout: (s-1)/2 = h - 1/2 and log(2 pi / s) =
+      // log(pi / h).
+      const double h = 0.5 * a + 0.5 * b + 1. + 0.5 * k;
       // q - p, from |a - b| rather than from p and q, so that it stays exact
       // when the exponents are huge and nearly equal.
       const double diff = std::fabs(a - b) - k;
-      const double d = diff / s;
+      const double d = 0.5 * diff / h;
       // For small d, log1p and atanh keep the O(s d^2) terms accurate; for
-      // d >= 1/2, 1 - d^2 = 4pq/s^2 and atanh(d) = log(q/p)/2 avoid
-      // computing 1 - d with cancellation.
+      // d >= 1/2, 1 - d^2 = (p/h)(q/h) and atanh(d) = log(q/p)/2 avoid
+      // computing 1 - d with cancellation. The logarithms of p/h and q/h are
+      // taken separately because their product, like s*s, can underflow or
+      // overflow.
       const double body = d < 0.5
-          ? 0.5 * (s - 1.) * std::log1p(-d * d) + diff * std::atanh(d)
-          : 0.5 * (s - 1.) * std::log(4. * p * q / (s * s)) + 0.5 * diff * std::log(q / p);
-      const double logMu0 = 0.5 * std::log(2. * pi / s) + body
-                          + StirlingRemainder(p) + StirlingRemainder(q) - StirlingRemainder(s);
+          ? (h - 0.5) * std::log1p(-d * d) + diff * std::atanh(d)
+          : (h - 0.5) * (std::log(p / h) + std::log(q / h)) + 0.5 * diff * std::log(q / p);
+      const double logMu0 = 0.5 * std::log(pi / h) + body
+                          + StirlingRemainder(p) + StirlingRemainder(q) - StirlingRemainder(2. * h);
       return std::exp(logMu0) * scale;
     }
   }

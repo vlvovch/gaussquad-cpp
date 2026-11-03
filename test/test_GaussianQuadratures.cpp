@@ -412,12 +412,22 @@ namespace {
     // alpha = beta: by the duplication formula, mu0 = sqrt(pi) Gamma(x) / Gamma(x + 1/2)
     // with x = alpha + 1, and for large x
     //   Gamma(x + 1/2) / Gamma(x) = sqrt(x) (1 - 1/(8x) + 1/(128x^2) + 5/(1024x^3) - 21/(32768x^4) + O(x^-5)),
-    // which for x >= 1e4 is accurate to ~1e-23 relative.
-    for (double a : {1e4, 1e6, 1e9, 1e12}) {
+    // which for x >= 1e4 is accurate to ~1e-23 relative. The largest cases have
+    // alpha + beta beyond the double range although mu0 ~ 1e-154 is not; the
+    // square roots are taken separately so that pi / x does not underflow.
+    for (double a : {1e4, 1e6, 1e9, 1e12, 1e200, 1e308, std::numeric_limits<double>::max()}) {
       const double x = a + 1.;
-      const double ref = std::sqrt(pi / x)
+      const double ref = std::sqrt(pi) / std::sqrt(x)
           / (1. - 1. / (8. * x) + 1. / (128. * x * x) + 5. / (1024. * x * x * x) - 21. / (32768. * x * x * x * x));
       EXPECT_NEAR(JacobiPolynomial(a, a).Norm(0) / ref, 1.0, Mu0Tolerance(ref)) << "alpha=beta=" << a;
+    }
+
+    // Where the true mu0 exceeds the double range, the result is +inf, not
+    // NaN or 0 from an intermediate overflow such as s * s.
+    const double overflowing[][2] = { {1e200, 1e199}, {0.5, 1e300}, {20., 1e160}, {1e308, 1.0000000001e308} };
+    for (const auto& ab : overflowing) {
+      EXPECT_EQ(JacobiPolynomial(ab[0], ab[1]).Norm(0), std::numeric_limits<double>::infinity())
+          << "alpha=" << ab[0] << " beta=" << ab[1];
     }
 
     // Integer beta: the gamma-free product reference.
