@@ -333,24 +333,35 @@ namespace {
       const double a = ab[0], b = ab[1];
       JacobiPolynomial jac(a, b);
       const double mu0 = JacobiMu0IntegerBeta(a, static_cast<int>(b));
-      // Mean and second moment of x under the normalised weight (x = 2t - 1 with
-      // t ~ Beta(b+1, a+1)); exact for any rule with n >= 2.
-      const double mean = (b - a) / (a + b + 2.);
-      const double second = 4. * (a + 1.) * (b + 1.) / ((a + b + 2.) * (a + b + 2.) * (a + b + 3.))
-                          + mean * mean;
+      // Normalised moments m_k = E[x^k] under the weight, from the gamma-free
+      // recurrence obtained by integrating d/dx[x^k (1-x)^(a+1) (1+x)^(b+1)]:
+      //   (a+b+k+2) m_{k+1} = (b-a) m_k + k m_{k-1},   m_0 = 1.
+      // Both terms on the right have the same sign, so there is no cancellation.
+      // Moments beyond the second depend on the recurrence coefficients for
+      // n >= 1 (the first two only on the separate n == 0 branch), so they also
+      // check the a_n coefficient that was wrong for alpha != beta.
+      const int maxMoment = 6;
+      std::vector<double> m(maxMoment + 1);
+      m[0] = 1.;
+      m[1] = (b - a) / (a + b + 2.);
+      for (int k = 1; k < maxMoment; ++k)
+        m[k + 1] = ((b - a) * m[k] + k * m[k - 1]) / (a + b + k + 2.);
       for (int n : {2, 8, 32}) {
         auto q = GaussianQuadrature(n, &jac);
-        double s0 = 0., s1 = 0., s2 = 0.;
+        std::vector<double> s(maxMoment + 1, 0.);
         for (int k = 0; k < n; ++k) {
           const double x = q.first[k], w = q.second[k];
           ASSERT_TRUE(std::isfinite(x)) << "a=" << a << " b=" << b << " n=" << n;
           ASSERT_TRUE(std::isfinite(w)) << "a=" << a << " b=" << b << " n=" << n;
           EXPECT_GE(w, 0.0);
-          s0 += w; s1 += w * x; s2 += w * x * x;
+          double xp = 1.;
+          for (int j = 0; j <= maxMoment; ++j) { s[j] += w * xp; xp *= x; }
         }
-        EXPECT_NEAR(s0 / mu0, 1.0, 1e-10) << "a=" << a << " b=" << b << " n=" << n;
-        EXPECT_NEAR(s1 / s0, mean, 1e-12) << "a=" << a << " b=" << b << " n=" << n;
-        EXPECT_NEAR(s2 / s0, second, 1e-12) << "a=" << a << " b=" << b << " n=" << n;
+        EXPECT_NEAR(s[0] / mu0, 1.0, 1e-10) << "a=" << a << " b=" << b << " n=" << n;
+        // An n-point Gauss rule is exact to degree 2n - 1.
+        for (int j = 1; j <= std::min(maxMoment, 2 * n - 1); ++j)
+          EXPECT_NEAR(s[j] / s[0], m[j], 1e-12)
+              << "a=" << a << " b=" << b << " n=" << n << " moment " << j;
       }
     }
   }
