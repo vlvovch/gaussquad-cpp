@@ -13,8 +13,8 @@ authors:
     orcid: 'https://orcid.org/0000-0002-2189-4766'
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.20693630
-    description: Zenodo archive of GaussQuad
+    value: 10.5281/zenodo.20693629
+    description: Zenodo archive of GaussQuad (all versions)
 repository-code: 'https://github.com/vlvovch/gaussquad-cpp'
 abstract: >-
   A header-only C++ library for computing Gaussian quadrature nodes and weights
